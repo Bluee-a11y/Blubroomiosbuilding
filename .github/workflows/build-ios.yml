@@ -1,0 +1,80 @@
+name: Build BlubRoom for iOS
+
+on:
+  workflow_dispatch:
+
+jobs:
+  unity-build:
+    name: Create iOS Xcode project
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download project
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Build Unity iOS project
+        uses: game-ci/unity-builder@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          unityVersion: 2022.3.62f1
+          targetPlatform: iOS
+
+      - name: Upload Xcode project
+        uses: actions/upload-artifact@v4
+        with:
+          name: BlubRoom-Xcode
+          path: build/iOS
+
+  make-ipa:
+    name: Compile unsigned IPA
+    needs: unity-build
+    runs-on: macos-14
+
+    steps:
+      - name: Download Xcode project
+        uses: actions/download-artifact@v4
+        with:
+          name: BlubRoom-Xcode
+          path: ios-project
+
+      - name: Select compatible Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: "15.4"
+
+      - name: Compile application
+        working-directory: ios-project
+        run: |
+          xcodebuild \
+            -project "iOS/Unity-iPhone.xcodeproj" \
+            -scheme "Unity-iPhone" \
+            -configuration Release \
+            -sdk iphoneos \
+            CODE_SIGNING_ALLOWED=NO \
+            CONFIGURATION_BUILD_DIR="$PWD/output"
+
+      - name: Package unsigned IPA
+        working-directory: ios-project
+        run: |
+          APP_PATH=$(find output -maxdepth 1 -name "*.app" -print -quit)
+
+          if [ -z "$APP_PATH" ]; then
+            echo "ERROR: No compiled app was found."
+            exit 1
+          fi
+
+          rm -rf Payload
+          mkdir Payload
+          cp -R "$APP_PATH" Payload/
+          ditto -c -k --sequesterRsrc --keepParent Payload BlubRoom-unsigned.ipa
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: BlubRoom-iOS
+          path: ios-project/BlubRoom-unsigned.ipa
